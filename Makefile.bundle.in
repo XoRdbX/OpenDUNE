@@ -115,7 +115,7 @@ bundle_dmg: bundle
 	@echo '[BUNDLE] Creating $(BUNDLE_NAME).dmg'
 	$(eval TMP_DMG := $(shell mktemp -u -t opendunedmg).dmg)
 	$(Q)hdiutil create -srcfolder $(BUNDLE_DIR) -size 4m -ov -format UDRW -fs HFS+ -volname $(VOLUME_NAME) $(TMP_DMG)
-	$(Q)DEV_NAME=$$(hdiutil attach -readwrite -noverify -noautoopen "$(TMP_DMG)" | grep '/Volumes/' | egrep '^/dev/' | sed 1q | awk '{print $$1}') && \
+	$(Q)DEV_NAME=$$(hdiutil attach -readwrite -noverify -noautoopen "$(TMP_DMG)" | grep -- '/Volumes/' | grep -E -- '^/dev/' | sed 1q | awk '{print $$1}') && \
 	echo "$(TMP_DMG) mounted as $${DEV_NAME}" && \
 	cp "$(ROOT_DIR)/os/macosx/opendune.icns" $(MOUNT_DIR)/.VolumeIcon.icns && \
 	$(SETFILE) -c icnC $(MOUNT_DIR)/.VolumeIcon.icns && \

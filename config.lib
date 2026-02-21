@@ -296,19 +296,19 @@ check_params() {
 	# Check if all params have valid values
 
 	# OS only allows DETECT, UNIX, OSX, FREEBSD, OPENBSD, MORPHOS, BEOS, HAIKU, SUNOS, CYGWIN, MINGW, OS2, DOS, and WINCE, TOS
-	if [ -z "`echo $os | egrep '^(DETECT|UNIX|OSX|FREEBSD|OPENBSD|NETBSD|HPUX|MORPHOS|BEOS|HAIKU|SUNOS|CYGWIN|MINGW|OS2|DOS|WINCE|TOS)$'`" ]; then
+	if [ -z "`echo $os | grep -E '^(DETECT|UNIX|OSX|FREEBSD|OPENBSD|NETBSD|HPUX|MORPHOS|BEOS|HAIKU|SUNOS|CYGWIN|MINGW|OS2|DOS|WINCE|TOS)$'`" ]; then
 		log 1 "configure: error: invalid option --os=$os"
 		log 1 " Available options are: --os=[DETECT|UNIX|OSX|FREEBSD|OPENBSD|NETBSD|HPUX|MORPHOS|BEOS|HAIKU|SUNOS|CYGWIN|MINGW|OS2|DOS|WINCE|TOS]"
 		exit 1
 	fi
 	# cpu_type can be either 32 or 64
-	if [ -z "`echo $cpu_type | egrep '^(32|64|DETECT)$'`" ]; then
+	if [ -z "`echo $cpu_type | grep -E -- '^(32|64|DETECT)$'`" ]; then
 		log 1 "configure: error: invalid option --cpu-type=$cpu_type"
 		log 1 " Available options are: --cpu-type[=DETECT|32|64]"
 		exit 1
 	fi
 	# enable_debug should be between 0 and 4
-	if [ -z "`echo $enable_debug | egrep '^[0123]$'`" ]; then
+	if [ -z "`echo $enable_debug | grep -E -- '^[0123]$'`" ]; then
 		log 1 "configure: error: invalid option --enable-debug=$enable_debug"
 		log 1 " Available options are: --enable-debug[=0123]"
 		exit 1
@@ -1700,35 +1700,35 @@ detect_library() {
 	log 2 "detecting $2"
 
 	if [ "$1" = "1" ] || [ "$1" = "" ] || [ "$1" = "2" ]; then
-		eval "$2=`ls -1 /usr/include/$4*.h 2>/dev/null | egrep \"\/$5\$\"`"
+		eval "$2=`ls -1 /usr/include/$4*.h 2>/dev/null | grep -E -- \"\/$5\$\"`"
 		eval "res=\$$2"
 		if [ -z "$res" ]; then
 			log 2 "  trying /usr/include/$4$5... no"
-			eval "$2=`ls -1 /usr/local/include/$4*.h 2>/dev/null | egrep \"\/$5\$\"`"
+			eval "$2=`ls -1 /usr/local/include/$4*.h 2>/dev/null | grep -E -- \"\/$5\$\"`"
 		fi
 		eval "res=\$$2"
 		if [ -z "$res" ]; then
 			log 2 "  trying /usr/local/include/$4$5... no"
-			eval "$2=`ls -1 /mingw/include/$4*.h 2>/dev/null | egrep \"\/$5\$\"`"
+			eval "$2=`ls -1 /mingw/include/$4*.h 2>/dev/null | grep -E -- \"\/$5\$\"`"
 		fi
 		eval "res=\$$2"
 		if [ -z "$res" ]; then
 			log 2 "  trying /mingw/include/$4$5... no"
-			eval "$2=`ls -1 /opt/local/include/$4*.h 2>/dev/null | egrep \"\/$5\$\"`"
+			eval "$2=`ls -1 /opt/local/include/$4*.h 2>/dev/null | grep -E -- \"\/$5\$\"`"
 		fi
 		eval "res=\$$2"
 		if [ -z "$res" ]; then
 			log 2 "  trying /opt/local/include/$4$5... no"
 		fi
 		if [ -z "$res" ] && [ "$os" = "NETBSD" ]; then
-			eval "$2=`ls -1 /usr/pkg/include/$4*.h 2>/dev/null | egrep \"\/$5\$\"`"
+			eval "$2=`ls -1 /usr/pkg/include/$4*.h 2>/dev/null | grep -E -- \"\/$5\$\"`"
 			eval "res=\$$2"
 			if [ -z "$res" ]; then
 				log 2 "  trying /usr/pkg/include/$4$5... no"
 			fi
 		fi
 		if [ -z "$res" ] && [ "$os" = "HAIKU" ]; then
-			eval "$2=`ls -1 /boot/common/include/$4*.h 2>/dev/null | egrep \"\/$5\$\"`"
+			eval "$2=`ls -1 /boot/common/include/$4*.h 2>/dev/null | grep -E -- \"\/$5\$\"`"
 			eval "res=\$$2"
 			if [ -z "$res" ]; then
 				log 2 "  trying /boot/common/include/$4$5... no"
@@ -1740,21 +1740,21 @@ detect_library() {
 			eval "res=\$$2"
 			log 2 "  trying $res... found"
 			# Now find the static lib, if needed
-			eval "$2=`ls /lib/*.a 2>/dev/null | egrep \"\/$3\$\"`"
+			eval "$2=`ls /lib/*.a 2>/dev/null | grep -E -- \"\/$3\$\"`"
 			eval "res=\$$2"
 			if [ -z "$res" ]; then
 				log 2 "  trying /lib/$3... no"
-				eval "$2=`ls /usr/lib/*.a 2>/dev/null | egrep \"\/$3\$\"`"
+				eval "$2=`ls /usr/lib/*.a 2>/dev/null | grep -E -- \"\/$3\$\"`"
 			fi
 			eval "res=\$$2"
 			if [ -z "$res" ]; then
 				log 2 "  trying /usr/lib/$3... no"
-				eval "$2=`ls /usr/local/lib/*.a 2>/dev/null | egrep \"\/$3\$\"`"
+				eval "$2=`ls /usr/local/lib/*.a 2>/dev/null | grep -E -- \"\/$3\$\"`"
 			fi
 			eval "res=\$$2"
 			if [ -z "$res" ]; then
 				log 2 "  trying /usr/local/lib/$3... no"
-				eval "$2=`ls /mingw/lib/*.a 2>/dev/null | egrep \"\/$3\$\"`"
+				eval "$2=`ls /mingw/lib/*.a 2>/dev/null | grep -E -- \"\/$3\$\"`"
 			fi
 			eval "res=\$$2"
 			if [ -z "$res" ]; then
