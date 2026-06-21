@@ -70,6 +70,10 @@
 #include "tools.h"
 #include "unit.h"
 #include "video/video.h"
+#include "network/network.h"
+#include "network/lockstep.h"
+#include "network/command.h"
+#include "gui/lobby.h"
 
 #ifdef TOS
 #include "rev.h"
@@ -832,6 +836,12 @@ static void GameLoop_GameIntroAnimationMenu(void)
 	GUI_PaletteAnimate();
 
 	if (stringID == STR_PLAY_A_GAME) g_gameMode = GM_PICKHOUSE;
+
+	/* M key in main menu launches multiplayer lobby */
+	{
+		uint16 k = Input_Keyboard_NextKey();
+		if (k == 'M' || k == 'm') g_gameMode = GM_LOBBY;
+	}
 }
 
 static void InGame_Numpad_Move(uint16 key)
@@ -993,6 +1003,30 @@ static void GameLoop_Main(void)
 	g_canSkipIntro = File_Exists_Personal("ONETIME.DAT");
 
 	for (;; sleepIdle()) {
+		/* Multiplayer lobby: launched from main menu via 'M' key */
+		if (g_gameMode == GM_LOBBY) {
+			if (GUI_Lobby_Show()) {
+				/* Lobby succeeded: start multiplayer game */
+				uint8 localHouseID = g_netConfig.humanHouseIDs[g_netConfig.localPlayerIndex];
+				g_playerHouseID   = (HouseType)localHouseID;
+				GUI_Mouse_Hide_Safe();
+				GFX_ClearBlock(SCREEN_0);
+				Sprites_LoadTiles();
+				GUI_Palette_CreateRemap(g_playerHouseID);
+				Voice_LoadVoices(g_playerHouseID);
+				GUI_Mouse_Show_Safe();
+				Tools_RandomLCG_Seed((uint16)(g_netConfig.sharedSeed & 0xFFFF));
+				Tools_Random_Seed(g_netConfig.sharedSeed);
+				g_gameMode   = GM_RESTART;
+				g_scenarioID = 1;
+				g_campaignID = 0;
+				g_strategicRegionBits = 0;
+			} else {
+				g_gameMode = GM_MENU;
+			}
+			continue;
+		}
+
 		if (g_gameMode == GM_MENU) {
 			GameLoop_GameIntroAnimationMenu();
 
@@ -1107,6 +1141,18 @@ static void GameLoop_Main(void)
 			InGame_Numpad_Move(key);
 
 			GUI_DrawCredits(g_playerHouseID, 0);
+
+			/* Multiplayer: synchronise commands before running game logic */
+			if (g_netConfig.active) {
+				if (!NetLockstep_Tick(g_timerGame)) {
+					/* Timeout: peer disconnected, abort to menu */
+					GUI_DisplayText("Network error: peer disconnected!", 1);
+					g_gameMode = GM_MENU;
+					Net_Uninit();
+					memset(&g_netConfig, 0, sizeof(g_netConfig));
+					break;
+				}
+			}
 
 			GameLoop_Team();
 			GameLoop_Unit();

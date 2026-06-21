@@ -24,6 +24,7 @@
 #include "timer.h"
 #include "unit.h"
 #include "gui/gui.h"
+#include "network/network.h"
 
 Scenario g_scenario;
 
@@ -72,6 +73,39 @@ static void Scenario_Load_House(uint8 houseID)
 	if (*houseType != 'H') return;
 
 	h->flags.human = true;
+
+	/* In multiplayer, check if any human slot matches this house.
+	 * If so, mark it human; the local player's house is identified by
+	 * g_playerHouseID which was set in the lobby. */
+	if (g_netConfig.active) {
+		uint8 i;
+		bool isLocalPlayer = false;
+		bool isAnyHuman    = false;
+
+		for (i = 0; i < g_netConfig.playerCount; i++) {
+			if (g_netConfig.humanHouseIDs[i] == houseID) {
+				isAnyHuman = true;
+				if (i == g_netConfig.localPlayerIndex) isLocalPlayer = true;
+			}
+		}
+
+		if (!isAnyHuman) {
+			/* This house is AI-only, even though scenario says Human */
+			h->flags.human    = false;
+			h->flags.isAIActive = true;
+			return;
+		}
+
+		h->flags.human      = true;
+		h->flags.isAIActive = false;
+
+		if (isLocalPlayer) {
+			g_playerHouseID       = houseID;
+			g_playerHouse         = h;
+			g_playerCreditsNoSilo = h->credits;
+		}
+		return;
+	}
 
 	g_playerHouseID       = houseID;
 	g_playerHouse         = h;

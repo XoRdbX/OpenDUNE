@@ -30,6 +30,8 @@
 #include "../timer.h"
 #include "../tools.h"
 #include "../unit.h"
+#include "../network/network.h"
+#include "../network/command.h"
 
 static uint32 s_tickCursor;                                 /*!< Stores last time Viewport changed the cursor spriteID. */
 static uint32 s_tickMapScroll;                              /*!< Stores last time Viewport ran MapScroll function. */
@@ -164,18 +166,29 @@ bool GUI_Widget_Viewport_Click(Widget *w)
 			encoded = Tools_Index_Encode(packed, IT_TILE);
 		}
 
-		Unit_SetAction(u, action);
-
-		if (action == ACTION_MOVE) {
-			Unit_SetDestination(u, encoded);
-		} else if (action == ACTION_HARVEST) {
-			u->targetMove = encoded;
+		if (g_netConfig.active) {
+			/* Queue network command; apply at scheduled tick on all clients */
+			if (action == ACTION_MOVE) {
+				NetCmd_QueueLocal(CMD_UNIT_MOVE, u->o.index, encoded, 0);
+			} else if (action == ACTION_HARVEST) {
+				NetCmd_QueueLocal(CMD_UNIT_HARVEST, u->o.index, encoded, 0);
+			} else {
+				NetCmd_QueueLocal(CMD_UNIT_ATTACK, u->o.index, encoded, 0);
+			}
 		} else {
-			Unit *target;
+			Unit_SetAction(u, action);
 
-			Unit_SetTarget(u, encoded);
-			target = Tools_Index_GetUnit(u->targetAttack);
-			if (target != NULL) target->blinkCounter = 8;
+			if (action == ACTION_MOVE) {
+				Unit_SetDestination(u, encoded);
+			} else if (action == ACTION_HARVEST) {
+				u->targetMove = encoded;
+			} else {
+				Unit *target;
+
+				Unit_SetTarget(u, encoded);
+				target = Tools_Index_GetUnit(u->targetAttack);
+				if (target != NULL) target->blinkCounter = 8;
+			}
 		}
 
 		if (g_enableVoices == 0) {
@@ -201,6 +214,15 @@ bool GUI_Widget_Viewport_Click(Widget *w)
 		s = g_structureActive;
 		si = &g_table_structureInfo[g_structureActiveType];
 		h = g_playerHouse;
+
+		if (g_netConfig.active) {
+			NetCmd_QueueLocal(CMD_STRUCTURE_PLACE, s->o.index, g_selectionPosition, 0);
+			GUI_ChangeSelectionType(SELECTIONTYPE_STRUCTURE);
+			g_structureActiveType = 0xFFFF;
+			g_structureActive     = NULL;
+			g_selectionState      = 0;
+			return true;
+		}
 
 		if (Structure_Place(s, g_selectionPosition)) {
 			Voice_Play(20);
