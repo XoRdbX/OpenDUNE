@@ -34,6 +34,8 @@
 #include "../tile.h"
 #include "../timer.h"
 #include "../unit.h"
+#include "../network/network.h"
+#include "../network/command.h"
 
 
 char g_savegameDesc[5][51];                                 /*!< Array of savegame descriptions for the SaveLoad window. */
@@ -105,19 +107,31 @@ bool GUI_Widget_SpriteTextButton_Click(Widget *w)
 			break;
 
 		case STR_ON_HOLD:
-			s->o.flags.s.repairing = false;
-			s->o.flags.s.onHold    = false;
-			s->o.flags.s.upgrading = false;
+			if (g_netConfig.active) {
+				NetCmd_QueueLocal(CMD_STRUCTURE_HOLD, s->o.index, 0, 0);
+			} else {
+				s->o.flags.s.repairing = false;
+				s->o.flags.s.onHold    = false;
+				s->o.flags.s.upgrading = false;
+			}
 			break;
 
 		case STR_BUILD_IT:
-			Structure_BuildObject(s, s->objectType);
+			if (g_netConfig.active) {
+				NetCmd_QueueLocal(CMD_STRUCTURE_BUILD, s->o.index, s->objectType, 0);
+			} else {
+				Structure_BuildObject(s, s->objectType);
+			}
 			break;
 
 		case STR_LAUNCH:
 		case STR_FREMEN:
 		case STR_SABOTEUR:
-			Structure_ActivateSpecial(s);
+			if (g_netConfig.active) {
+				NetCmd_QueueLocal(CMD_STRUCTURE_LAUNCH, s->o.index, 0, 0);
+			} else {
+				Structure_ActivateSpecial(s);
+			}
 			break;
 
 		case STR_D_DONE:
@@ -297,7 +311,11 @@ bool GUI_Widget_TextButton_Click(Widget *w)
 	u->targetMove = 0;
 	u->route[0] = 0xFF;
 
-	Unit_SetAction(u, action);
+	if (g_netConfig.active) {
+		NetCmd_QueueLocal(CMD_UNIT_ACTION, u->o.index, (uint16)action, 0);
+	} else {
+		Unit_SetAction(u, action);
+	}
 
 	if (ui->movementType == MOVEMENT_FOOT) Sound_StartSound(ai->soundID);
 
@@ -398,7 +416,11 @@ bool GUI_Widget_Picture_Click(Widget *w)
 
 	if (s == NULL || !g_table_structureInfo[s->o.type].o.flags.factory) return false;
 
-	Structure_BuildObject(s, 0xFFFF);
+	if (g_netConfig.active) {
+		NetCmd_QueueLocal(CMD_STRUCTURE_CANCEL, s->o.index, 0, 0);
+	} else {
+		Structure_BuildObject(s, 0xFFFF);
+	}
 
 	return false;
 }
@@ -415,6 +437,15 @@ bool GUI_Widget_RepairUpgrade_Click(Widget *w)
 
 	s = Structure_Get_ByPackedTile(g_selectionPosition);
 
+	if (g_netConfig.active) {
+		/* Queue repair/upgrade as network command; apply at scheduled tick */
+		if (!s->o.flags.s.upgrading) {
+			NetCmd_QueueLocal(CMD_STRUCTURE_REPAIR, s->o.index, 0, 0);
+		} else {
+			NetCmd_QueueLocal(CMD_STRUCTURE_UPGRADE, s->o.index, 0, 0);
+		}
+		return false;
+	}
 	if (Structure_SetRepairingState(s, -1, w)) return false;
 	Structure_SetUpgradingState(s, -1, w);
 

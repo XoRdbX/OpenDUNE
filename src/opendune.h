@@ -7,7 +7,8 @@ typedef enum GameMode {
 	GM_MENU      = 0,
 	GM_NORMAL    = 1,
 	GM_RESTART   = 2,
-	GM_PICKHOUSE = 3
+	GM_PICKHOUSE = 3,
+	GM_LOBBY     = 4  /*!< Multiplayer lobby screen. */
 } GameMode;
 
 /** X and Y coordinate. */
