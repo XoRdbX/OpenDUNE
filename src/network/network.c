@@ -79,7 +79,11 @@ bool Net_Init(uint16 port)
 		memset(&s_peerAddr[i], 0, sizeof(s_peerAddr[i]));
 		s_peerAddr[i].sin_family = AF_INET;
 		s_peerAddr[i].sin_port   = htons(g_netConfig.peers[i].port);
+#if defined(_WIN32) && defined(_MSC_VER) && (_MSC_VER < 1900)
+		s_peerAddr[i].sin_addr.s_addr = inet_addr(g_netConfig.peers[i].ip);
+#else
 		inet_pton(AF_INET, g_netConfig.peers[i].ip, &s_peerAddr[i].sin_addr);
+#endif
 	}
 
 	return true;
