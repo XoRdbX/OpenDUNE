@@ -15,6 +15,7 @@
 #include "../tools.h"
 #include "../tile.h"
 #include "../object.h"
+#include "../timer.h"
 
 /**
  * Queue a local player command for the upcoming scheduled tick.
@@ -23,7 +24,6 @@
  */
 void NetCmd_QueueLocal(NetCommandType type, uint16 arg0, uint16 arg1, uint16 arg2)
 {
-	extern uint32 g_timerGame;
 	NetCommand cmd;
 
 	memset(&cmd, 0, sizeof(cmd));

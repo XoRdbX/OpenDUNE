@@ -38,6 +38,7 @@
 #include "../structure.h"
 #include "../house.h"
 #include "../tile.h"
+#include "../timer.h"
 #include "../tools.h"
 
 #define MSG_TICK_COMMANDS  0xD1

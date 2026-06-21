@@ -34,19 +34,19 @@ typedef enum NetCommandType {
 	CMD_MAX
 } NetCommandType;
 
-/** Wire format of a single command (16 bytes, network byte order). */
-#pragma pack(push, 1)
+/** Wire format of a single command (16 bytes, little-endian). */
+MSVC_PACKED_BEGIN
 typedef struct NetCommand {
 	uint8  type;         /*!< NetCommandType */
 	uint8  houseID;      /*!< Source house (for validation). */
 	uint16 tick;         /*!< Game tick at which to apply this command. */
 	uint16 arg0;         /*!< First argument (unit/structure index). */
-	uint16 arg1;         /*!< Second argument (encoded target, objectType, …). */
+	uint16 arg1;         /*!< Second argument (encoded target, objectType, ...). */
 	uint16 arg2;         /*!< Third argument (reserved). */
 	uint8  playerIndex;  /*!< Sender player slot index. */
 	uint8  _pad[5];      /*!< Padding to 16 bytes. */
-} NetCommand;
-#pragma pack(pop)
+} GCC_PACKED NetCommand;
+MSVC_PACKED_END
 
 #define NET_CMD_WIRE_SIZE  16
 #define NET_MAX_CMDS_TICK  32  /*!< Max commands per tick per player. */
