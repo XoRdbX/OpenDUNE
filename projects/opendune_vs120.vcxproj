@@ -76,7 +76,7 @@
       <EnableEnhancedInstructionSet Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">StreamingSIMDExtensions2</EnableEnhancedInstructionSet>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>winmm.lib;comctl32.lib;Shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winmm.lib;comctl32.lib;Shlwapi.lib;Ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <TargetMachine Condition="'$(Platform)'=='Win32'">MachineX86</TargetMachine>
@@ -284,6 +284,10 @@
       <ObjectFileName>$(IntDir)src\gui\</ObjectFileName>
     </ClCompile>
     <ClInclude Include="..\src\gui\gui.h" />
+    <ClCompile Include="..\src\gui\lobby.c">
+      <ObjectFileName>$(IntDir)src\gui\</ObjectFileName>
+    </ClCompile>
+    <ClInclude Include="..\src\gui\lobby.h" />
     <ClCompile Include="..\src\gui\mentat.c">
       <ObjectFileName>$(IntDir)src\gui\</ObjectFileName>
     </ClCompile>
@@ -305,6 +309,18 @@
     <ClCompile Include="..\src\gui\widget_draw.c">
       <ObjectFileName>$(IntDir)src\gui\</ObjectFileName>
     </ClCompile>
+    <ClCompile Include="..\src\network\command.c">
+      <ObjectFileName>$(IntDir)src\network\</ObjectFileName>
+    </ClCompile>
+    <ClInclude Include="..\src\network\command.h" />
+    <ClCompile Include="..\src\network\lockstep.c">
+      <ObjectFileName>$(IntDir)src\network\</ObjectFileName>
+    </ClCompile>
+    <ClInclude Include="..\src\network\lockstep.h" />
+    <ClCompile Include="..\src\network\network.c">
+      <ObjectFileName>$(IntDir)src\network\</ObjectFileName>
+    </ClCompile>
+    <ClInclude Include="..\src\network\network.h" />
     <ClCompile Include="..\src\input\input.c">
       <ObjectFileName>$(IntDir)src\input\</ObjectFileName>
     </ClCompile>
