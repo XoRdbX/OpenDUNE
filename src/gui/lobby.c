@@ -15,11 +15,12 @@
  *   LOBBY_MSG_START  (0xA3) host → all:   game start params
  *   LOBBY_MSG_PING   (0xA4) bidirectional keepalive
  *   LOBBY_MSG_SLOT   (0xA5) host → client: "you are slot N"
+ *   LOBBY_MSG_BYE    (0xA6) client → host: graceful disconnect
  *
  * ROSTER wire format (per slot, 21 bytes):
  *   [+0]      filled      (1 byte)
  *   [+1]      houseChoice (1 byte)
- *   [+2]      ready       (1 byte)
+ *   [+2]      reserved    (1 byte, was "ready")
  *   [+3..+18] ip          (16 bytes, null-padded, dotted-decimal)
  *   [+19..+20] port       (2 bytes LE)
  */
@@ -48,6 +49,7 @@
 #define LOBBY_MSG_START    0xA3
 #define LOBBY_MSG_PING     0xA4
 #define LOBBY_MSG_SLOT     0xA5
+#define LOBBY_MSG_BYE      0xA6
 
 #define LOBBY_PORT         NET_DEFAULT_PORT
 #define LOBBY_REFRESH_MS   500
@@ -63,10 +65,28 @@ typedef struct LobbySlot {
 	char   ip[64];
 	uint16 port;
 	uint8  houseChoice;
-	bool   ready;
 } LobbySlot;
 
 static LobbySlot s_slots[NET_MAX_PLAYERS];
+
+/* ------------------------------------------------------------------ */
+
+/* Non-blocking key read that avoids flooding the input ring buffer.
+ * Input_Keyboard_NextKey() calls Input_AddHistory(0) every invocation;
+ * at ~1000Hz that would overflow the 512-entry buffer and bury real
+ * keystrokes.  Only call it when the buffer already has something. */
+static uint16 LobbyPollKey(void)
+{
+	if (Input_IsInputAvailable() == 0) return 0;
+	return Input_Keyboard_NextKey();
+}
+
+/* Test whether k is any representation of the Enter key. */
+static bool IsEnterKey(uint16 k)
+{
+	/* 0x0D = CR, 0x2B = NUMPAD5/RETURN (GameLoop), 0x4C = KP Enter, 0x61 = Enter alt */
+	return k == 0x0D || k == 0x2B || k == 0x4C || k == 0x61;
+}
 
 /* ------------------------------------------------------------------ */
 
@@ -89,21 +109,20 @@ static void LobbyDraw(bool isHost, uint8 mySlot, const char *statusLine)
 			snprintf(buf, sizeof(buf), "  Slot %d: (waiting...)", i + 1);
 			col = 7;
 		} else {
-			snprintf(buf, sizeof(buf), "  Slot %d: %s  [%s]%s",
+			snprintf(buf, sizeof(buf), "  Slot %d: %s  [%s]",
 			         i + 1, s_slots[i].ip,
-			         s_houseNames[s_slots[i].houseChoice],
-			         s_slots[i].ready ? " READY" : "");
+			         s_houseNames[s_slots[i].houseChoice % 3]);
 			col = (i == mySlot) ? 14 : 10;
 		}
 		GUI_DrawText_Wrapper(buf, 10, 46 + i * 12, col, 0, 0x12);
 	}
 
-	if (statusLine != NULL) {
+	if (statusLine != NULL && statusLine[0] != '\0') {
 		GUI_DrawText_Wrapper(statusLine, 10, 90, 6, 0, 0x12);
 	}
 
-	GUI_DrawText_Wrapper(isHost ? "ENTER=Start game  ESC=Cancel"
-	                            : "SPACE=Toggle Ready  ESC=Cancel",
+	GUI_DrawText_Wrapper(isHost ? "ENTER = Start  ESC = Cancel"
+	                            : "ESC = Cancel",
 	                     10, 180, 7, 0, 0x12);
 
 	GFX_SetPalette(g_palette1);
@@ -129,7 +148,7 @@ static bool PromptIP(const char *label, char *ipOut, uint16 maxLen)
 		key = Input_WaitForValidInput();
 
 		if (key == 0x1B) return false;
-		if (key == 0x0D || key == 0x4C) {
+		if (IsEnterKey(key)) {
 			if (pos > 0) { snprintf(ipOut, maxLen, "%s", buf); return true; }
 			continue;
 		}
@@ -145,7 +164,6 @@ static bool PromptIP(const char *label, char *ipOut, uint16 maxLen)
 
 static void LobbyBroadcastRoster(void)
 {
-	/* 2-byte header + ROSTER_SLOT_SIZE bytes per slot */
 	uint8  pkt[2 + NET_MAX_PLAYERS * ROSTER_SLOT_SIZE];
 	uint16 off = 0;
 	uint8  i;
@@ -156,10 +174,13 @@ static void LobbyBroadcastRoster(void)
 	for (i = 0; i < NET_MAX_PLAYERS; i++) {
 		pkt[off++] = s_slots[i].filled ? 1 : 0;
 		pkt[off++] = s_slots[i].houseChoice;
-		pkt[off++] = s_slots[i].ready ? 1 : 0;
+		pkt[off++] = 0; /* reserved */
 		memset(pkt + off, 0, 16);
-		memcpy(pkt + off, s_slots[i].ip,
-		       strlen(s_slots[i].ip) < 16 ? strlen(s_slots[i].ip) : 15);
+		{
+			size_t iplen = strlen(s_slots[i].ip);
+			if (iplen > 15) iplen = 15;
+			memcpy(pkt + off, s_slots[i].ip, iplen);
+		}
 		off += 16;
 		pkt[off++] = (uint8)(s_slots[i].port & 0xFF);
 		pkt[off++] = (uint8)((s_slots[i].port >> 8) & 0xFF);
@@ -191,7 +212,8 @@ static void LobbyBroadcastStart(uint32 seed)
 	}
 }
 
-/* ---- Find which slot an IP:port belongs to (-1 = unknown). ---- */
+/* ---- Slot helpers ---- */
+
 static int8 LobbyFindSlot(const char *ip, uint16 port)
 {
 	uint8 i;
@@ -203,7 +225,6 @@ static int8 LobbyFindSlot(const char *ip, uint16 port)
 	return -1;
 }
 
-/* ---- Find next free (unconnected, non-self) slot on host. ---- */
 static int8 LobbyNextFreeSlot(void)
 {
 	uint8 i;
@@ -223,37 +244,38 @@ static void LobbyHandlePacket(uint8 sender, const uint8 *buf, int16 len, bool is
 			break;
 
 		case LOBBY_MSG_HELLO:
-			/* buf[1] = houseChoice */
 			if (isHost && sender < NET_MAX_PLAYERS && len >= 2) {
 				s_slots[sender].filled      = true;
 				s_slots[sender].houseChoice = buf[1] % 3;
-				s_slots[sender].ready       = false;
 				snprintf(s_slots[sender].ip, sizeof(s_slots[sender].ip),
 				         "%s", g_netConfig.peers[sender].ip);
 				s_slots[sender].port = g_netConfig.peers[sender].port;
 			}
 			break;
 
+		case LOBBY_MSG_BYE:
+			if (isHost && sender < NET_MAX_PLAYERS) {
+				s_slots[sender].filled             = false;
+				g_netConfig.peers[sender].connected = false;
+			}
+			break;
+
 		case LOBBY_MSG_ROSTER:
-			/* Client processes roster update from host */
 			if (!isHost && len >= 2) {
 				uint8  cnt = buf[1];
 				uint8  i;
 				uint16 off = 2;
 				for (i = 0; i < cnt && i < NET_MAX_PLAYERS; i++) {
-					uint16 port;
 					char   ip[17];
+					uint16 port;
 					if (off + ROSTER_SLOT_SIZE > (uint16)len) break;
 					s_slots[i].filled      = (buf[off] != 0);
 					s_slots[i].houseChoice = buf[off + 1] % 3;
-					s_slots[i].ready       = (buf[off + 2] != 0);
 					memcpy(ip, buf + off + 3, 16);
 					ip[16] = '\0';
 					memcpy(s_slots[i].ip, ip, 17);
 					port = (uint16)buf[off + 19] | ((uint16)buf[off + 20] << 8);
 					s_slots[i].port = port;
-
-					/* Register non-self, non-host peers we learn about */
 					if (s_slots[i].filled && i != g_netConfig.localPlayerIndex
 					    && i != 0 && ip[0] != '\0') {
 						if (LobbyFindSlot(ip, port) < 0) {
@@ -266,7 +288,6 @@ static void LobbyHandlePacket(uint8 sender, const uint8 *buf, int16 len, bool is
 			break;
 
 		case LOBBY_MSG_SLOT:
-			/* Host tells this client its assigned slot index */
 			if (!isHost && len >= 2) {
 				uint8 slot = buf[1];
 				if (slot > 0 && slot < NET_MAX_PLAYERS) {
@@ -300,16 +321,15 @@ static void LobbyHandlePacket(uint8 sender, const uint8 *buf, int16 len, bool is
 bool GUI_Lobby_Show(void)
 {
 	bool   isHost;
-	bool   running = true;
-	bool   started = false;
-	uint32 lastRoster = 0;
+	bool   running  = true;
+	bool   started  = false;
+	bool   needsRedraw = true;
+	uint32 lastRoster  = 0;
+	uint32 lastDraw    = 0;
 	uint8  mySlot;
 	uint8  myHouseChoice = 0;
 	uint16 key;
 	char   statusLine[80];
-
-	bool   needsRedraw = true;
-	uint32 lastDraw    = 0;
 
 	memset(&g_netConfig, 0, sizeof(g_netConfig));
 	memset(s_slots, 0, sizeof(s_slots));
@@ -358,26 +378,22 @@ bool GUI_Lobby_Show(void)
 		mySlot = 0;
 		g_netConfig.localPlayerIndex = 0;
 
-		/* Host only knows its own slot; clients will connect dynamically. */
 		snprintf(g_netConfig.peers[0].ip, sizeof(g_netConfig.peers[0].ip), "127.0.0.1");
 		g_netConfig.peers[0].port      = LOBBY_PORT;
 		g_netConfig.peers[0].connected = true;
 
 		s_slots[0].filled      = true;
 		s_slots[0].houseChoice = myHouseChoice;
-		s_slots[0].ready       = false;
 		snprintf(s_slots[0].ip, sizeof(s_slots[0].ip), "localhost");
 		s_slots[0].port = LOBBY_PORT;
 
 	} else {
-		/* Client: only needs host IP. */
 		char hostIP[64] = {0};
 		if (!PromptIP("Host IP", hostIP, sizeof(hostIP))) return false;
 
-		mySlot = 1; /* will be updated via LOBBY_MSG_SLOT from host */
+		mySlot = 1;
 		g_netConfig.localPlayerIndex = mySlot;
 
-		/* Register host as peer 0. */
 		Net_SetPeerAddr(0, hostIP, LOBBY_PORT);
 
 		s_slots[mySlot].filled      = true;
@@ -386,10 +402,8 @@ bool GUI_Lobby_Show(void)
 	}
 
 	/* ---- Open socket ----
-	 * Host binds to the well-known port so clients can reach it.
-	 * Client binds to port 0 (OS picks a free ephemeral port) so that
-	 * multiple players on the same machine don't fight over the same port.
-	 * The host learns the client's actual port from the UDP source address. */
+	 * Host binds to the well-known port; client binds to an OS-assigned
+	 * ephemeral port so two instances on the same machine don't conflict. */
 	if (!Net_Init(isHost ? LOBBY_PORT : 0)) {
 		GUI_DrawText_Wrapper("ERROR: Cannot open UDP socket!", 10, 150, 4, 0, 0x12);
 		GFX_SetPalette(g_palette1);
@@ -398,31 +412,40 @@ bool GUI_Lobby_Show(void)
 	}
 
 	snprintf(statusLine, sizeof(statusLine),
-	         isHost ? "Waiting for clients... (ENTER to start)"
+	         isHost ? "Waiting for clients... (ENTER to start, need 2+)"
 	                : "Connecting to host...");
 
 	/* ---- Lobby loop ---- */
 	while (running) {
 		uint32 now = Net_GetTime();
 
+		/* Throttle redraws to ~10 fps; redraw immediately on state changes. */
 		if (needsRedraw || (now - lastDraw) >= 100) {
 			LobbyDraw(isHost, mySlot, statusLine);
 			needsRedraw = false;
 			lastDraw    = now;
 		}
 
-		/* Handle input */
+		/* Handle input — gate the key poll behind IsInputAvailable so we do
+		 * not call Input_AddHistory(0) thousands of times per second. */
 		{
-			uint16 k = Input_Keyboard_NextKey();
-			if (k == 0x1B) { running = false; break; }
+			uint16 k = LobbyPollKey();
 
-			if (isHost && (k == 0x0D || k == 0x4C)) {
-				bool allFilled = true;
-				uint8 i;
-				for (i = 0; i < NET_MAX_PLAYERS; i++) {
-					if (!s_slots[i].filled) { allFilled = false; break; }
+			if (k == 0x1B) { /* ESC = cancel */
+				if (!isHost) {
+					uint8 bye[1] = { LOBBY_MSG_BYE };
+					Net_Send(0, bye, 1);
 				}
-				if (allFilled) {
+				running = false;
+				break;
+			}
+
+			if (isHost && IsEnterKey(k)) {
+				uint8 i, filledCount = 0;
+				for (i = 0; i < NET_MAX_PLAYERS; i++) {
+					if (s_slots[i].filled) filledCount++;
+				}
+				if (filledCount >= 2) {
 					uint32 seed = (uint32)(now ^ ((uint32)g_timerGame << 16));
 					g_netConfig.sharedSeed = seed;
 					LobbyBroadcastStart(seed);
@@ -430,21 +453,14 @@ bool GUI_Lobby_Show(void)
 					running = false;
 				} else {
 					snprintf(statusLine, sizeof(statusLine),
-					         "Not all players connected yet!");
+					         "Need at least 2 players to start!");
 					needsRedraw = true;
 				}
-			}
-
-			if (!isHost && k == ' ') {
-				uint8 hello[2] = { LOBBY_MSG_HELLO, myHouseChoice };
-				s_slots[mySlot].ready = !s_slots[mySlot].ready;
-				Net_Send(0, hello, 2);
 			}
 		}
 
 		/* Receive packets */
 		if (isHost) {
-			/* Accept packets from any source; dynamically register new clients. */
 			uint8  buf[NET_MAX_PACKET_SIZE];
 			char   srcIP[64];
 			uint16 srcPort;
@@ -453,7 +469,6 @@ bool GUI_Lobby_Show(void)
 			while ((rlen = Net_RecvAny(buf, sizeof(buf), srcIP, &srcPort)) > 0) {
 				int8 slot = LobbyFindSlot(srcIP, srcPort);
 
-				/* New sender sending HELLO → assign a slot. */
 				if (slot < 0 && rlen >= 1 && buf[0] == LOBBY_MSG_HELLO) {
 					slot = LobbyNextFreeSlot();
 					if (slot >= 0) {
@@ -476,14 +491,12 @@ bool GUI_Lobby_Show(void)
 				}
 			}
 
-			/* Periodically broadcast roster and ping. */
 			if (now - lastRoster > LOBBY_REFRESH_MS) {
 				LobbyBroadcastRoster();
 				lastRoster = now;
 			}
 
 		} else {
-			/* Client: receive via registered peers (host + any others). */
 			uint8  buf[NET_MAX_PACKET_SIZE];
 			uint8  sender;
 			int16  rlen;
@@ -508,7 +521,6 @@ bool GUI_Lobby_Show(void)
 				}
 			}
 
-			/* Periodically ping host with HELLO (carries house choice). */
 			if (now - lastRoster > LOBBY_REFRESH_MS) {
 				uint8 hello[2] = { LOBBY_MSG_HELLO, myHouseChoice };
 				Net_Send(0, hello, 2);
@@ -525,11 +537,15 @@ bool GUI_Lobby_Show(void)
 		return false;
 	}
 
-	/* ---- Finalise g_netConfig from slot assignments ---- */
+	/* ---- Finalise g_netConfig ---- */
 	{
 		uint8 i;
 		for (i = 0; i < NET_MAX_PLAYERS; i++) {
-			g_netConfig.humanHouseIDs[i] = s_slots[i].houseChoice;
+			/* Mark unfilled slots with HOUSE_MAX so Scenario_Load_House won't
+			 * accidentally treat them as human players. */
+			g_netConfig.humanHouseIDs[i] = s_slots[i].filled
+			                               ? s_slots[i].houseChoice
+			                               : (uint8)HOUSE_MAX;
 		}
 		g_netConfig.active      = true;
 		g_netConfig.playerCount = NET_MAX_PLAYERS;

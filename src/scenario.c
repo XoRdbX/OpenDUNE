@@ -69,6 +69,19 @@ static void Scenario_Load_House(uint8 houseID)
 	h->creditsQuota = Ini_GetInteger(houseName, "Quota",    0, s_scenarioBuffer);
 	h->unitCountMax = Ini_GetInteger(houseName, "MaxUnit", 39, s_scenarioBuffer);
 
+	/* In multiplayer the scenario file may say Brain=CPU for a house that a
+	 * human player is assigned to (because we always load from SCENH*.INI).
+	 * Override: treat such houses as human regardless of the scenario Brain. */
+	if (g_netConfig.active && *houseType != 'H') {
+		uint8 i;
+		for (i = 0; i < NET_MAX_PLAYERS; i++) {
+			if (g_netConfig.humanHouseIDs[i] == houseID) {
+				houseType = strstr("HUMAN$CPU", "HUMAN");
+				break;
+			}
+		}
+	}
+
 	/* For 'Brain = Human' we have to set a few additional things */
 	if (*houseType != 'H') return;
 

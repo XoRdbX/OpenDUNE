@@ -1079,8 +1079,13 @@ static void GameLoop_Main(void)
 		if (g_gameMode == GM_RESTART) {
 			GUI_ChangeSelectionType(SELECTIONTYPE_MENTAT);
 
-			Game_LoadScenario(g_playerHouseID, g_scenarioID);
-			if (!g_debugScenario && !g_debugSkipDialogs) {
+			/* In multiplayer all peers must load the same scenario file for
+			 * lockstep determinism, so always use the Harkonnen file. */
+			{
+				uint8 loadHouse = g_netConfig.active ? HOUSE_HARKONNEN : g_playerHouseID;
+				Game_LoadScenario(loadHouse, g_scenarioID);
+			}
+			if (!g_debugScenario && !g_debugSkipDialogs && !g_netConfig.active) {
 				GUI_Mentat_ShowBriefing();
 			} else {
 				Debug("Skipping GUI_Mentat_ShowBriefing()\n");
