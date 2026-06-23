@@ -55,6 +55,13 @@ static uint32 s_checksumSent[LOCKSTEP_BUFFER_TICKS];
 static uint32 s_checksumRecv[NET_MAX_PLAYERS][LOCKSTEP_BUFFER_TICKS];
 static bool   s_checksumRecvFlag[NET_MAX_PLAYERS][LOCKSTEP_BUFFER_TICKS];
 
+/* Local lockstep tick counter — starts at 0 on NetLockstep_Init regardless of
+ * g_timerGame.  Using g_timerGame directly is wrong because both peers start
+ * their process-local g_timerGame at different absolute values (host and client
+ * don't launch at the same instant), so they would index different ring-buffer
+ * slots and never rendezvous. */
+static uint32 s_lockstepTick = 0;
+
 static bool s_initialised = false;
 
 void NetLockstep_Init(void)
@@ -66,8 +73,9 @@ void NetLockstep_Init(void)
 	memset(s_checksumSent, 0, sizeof(s_checksumSent));
 	memset(s_checksumRecv, 0, sizeof(s_checksumRecv));
 	memset(s_checksumRecvFlag, 0, sizeof(s_checksumRecvFlag));
-	s_localCount  = 0;
-	s_initialised = true;
+	s_localCount    = 0;
+	s_lockstepTick  = 0;
+	s_initialised   = true;
 
 	/* Bootstrap the ring buffer for the first LOCKSTEP_DELAY ticks.
 	 *
@@ -154,7 +162,7 @@ void NetLockstep_FlushSend(uint32 gameTick)
 {
 	uint8  pkt[NET_MAX_PACKET_SIZE];
 	uint16 len;
-	uint32 scheduledTick = gameTick + LOCKSTEP_DELAY;
+	uint32 scheduledTick = s_lockstepTick + LOCKSTEP_DELAY;
 	uint8  i;
 
 	len = BuildCommandsPacket(pkt, scheduledTick, s_localQueue, s_localCount);
@@ -180,9 +188,10 @@ void NetLockstep_FlushSend(uint32 gameTick)
 		if (i == g_netConfig.localPlayerIndex) continue;
 		if (!g_netConfig.peers[i].connected) continue;
 		sent = Net_Send(i, pkt, len);
-		fprintf(stderr, "[NET] tick=%u FlushSend -> peer[%u] scheduledTick=%u cmds=%u bytes=%u ok=%d\n",
-		        (unsigned)gameTick, (unsigned)i, (unsigned)scheduledTick,
-		        (unsigned)s_localCount, (unsigned)len, (int)sent);
+		fprintf(stderr, "[NET] gameTick=%u lstick=%u FlushSend -> peer[%u] sched=%u cmds=%u ok=%d\n",
+		        (unsigned)gameTick, (unsigned)s_lockstepTick,
+		        (unsigned)i, (unsigned)scheduledTick,
+		        (unsigned)s_localCount, (int)sent);
 	}
 
 	/* Clear local queue */
@@ -315,31 +324,35 @@ bool NetLockstep_Tick(uint32 gameTick)
 
 	if (!s_initialised || !g_netConfig.active) return true;
 
-	slot = (uint8)(gameTick % LOCKSTEP_BUFFER_TICKS);
+	/* Use s_lockstepTick, NOT gameTick, for ring-buffer indexing.
+	 * g_timerGame starts counting at process launch, so host and client have
+	 * different absolute values when the game loop begins.  s_lockstepTick
+	 * resets to 0 at NetLockstep_Init() for both peers, keeping them aligned. */
+	slot = (uint8)(s_lockstepTick % LOCKSTEP_BUFFER_TICKS);
 
-	fprintf(stderr, "[NET] Tick %u start: slot=%u  buf_state=[",
-	        (unsigned)gameTick, (unsigned)slot);
+	fprintf(stderr, "[NET] lstick=%u gameTick=%u slot=%u buf=[",
+	        (unsigned)s_lockstepTick, (unsigned)gameTick, (unsigned)slot);
 	for (i = 0; i < g_netConfig.playerCount; i++) {
 		if (!g_netConfig.peers[i].connected) { fprintf(stderr, "-"); continue; }
 		fprintf(stderr, "%c", s_tickBuf[slot].received[i] ? 'R' : '?');
 	}
 	fprintf(stderr, "]\n");
 
-	/* 1. Send our commands for gameTick+LOCKSTEP_DELAY */
+	/* 1. Send our commands for s_lockstepTick+LOCKSTEP_DELAY */
 	NetLockstep_FlushSend(gameTick);
 
 	/* 2. Compute and send checksum for previous tick */
 	checksum = NetLockstep_ComputeChecksum();
 	s_checksumSent[slot] = checksum;
 
-	plen = BuildChecksumPacket(pkt, gameTick, checksum);
+	plen = BuildChecksumPacket(pkt, s_lockstepTick, checksum);
 	for (i = 0; i < g_netConfig.playerCount; i++) {
 		if (i == g_netConfig.localPlayerIndex) continue;
 		if (!g_netConfig.peers[i].connected) continue;
 		Net_Send(i, pkt, plen);
 	}
 
-	/* 3. Wait until we have commands from all players for gameTick */
+	/* 3. Wait until we have commands from all players for s_lockstepTick */
 	deadline = Net_GetTime() + LOCKSTEP_TIMEOUT_MS;
 	for (;;) {
 		bool allReady = true;
@@ -357,8 +370,8 @@ bool NetLockstep_Tick(uint32 gameTick)
 		if (allReady) break;
 
 		if (Net_GetTime() > deadline) {
-			fprintf(stderr, "[NET] Timeout waiting for tick %u commands (slot=%u). Missing peers: [",
-			        (unsigned)gameTick, (unsigned)slot);
+			fprintf(stderr, "[NET] Timeout lstick=%u gameTick=%u slot=%u. Missing: [",
+			        (unsigned)s_lockstepTick, (unsigned)gameTick, (unsigned)slot);
 			for (i = 0; i < g_netConfig.playerCount; i++) {
 				if (!g_netConfig.peers[i].connected) continue;
 				if (!s_tickBuf[slot].received[i]) {
@@ -371,8 +384,8 @@ bool NetLockstep_Tick(uint32 gameTick)
 		}
 	}
 
-	fprintf(stderr, "[NET] Tick %u ready, applying %u player slots\n",
-	        (unsigned)gameTick, (unsigned)g_netConfig.playerCount);
+	fprintf(stderr, "[NET] lstick=%u ready, applying %u slots\n",
+	        (unsigned)s_lockstepTick, (unsigned)g_netConfig.playerCount);
 
 	/* 4. Apply all commands for this tick */
 	for (i = 0; i < g_netConfig.playerCount; i++) {
@@ -384,10 +397,11 @@ bool NetLockstep_Tick(uint32 gameTick)
 	}
 
 	/* 5. Check desync (uses previous tick's checksums) */
-	CheckChecksums(gameTick);
+	CheckChecksums(s_lockstepTick);
 
 	/* 6. Reset slot for reuse */
 	memset(&s_tickBuf[slot], 0, sizeof(s_tickBuf[slot]));
 
+	s_lockstepTick++;
 	return true;
 }
