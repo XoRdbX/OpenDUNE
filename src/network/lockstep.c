@@ -59,6 +59,8 @@ static bool s_initialised = false;
 
 void NetLockstep_Init(void)
 {
+	uint8 i, t;
+
 	memset(s_tickBuf, 0, sizeof(s_tickBuf));
 	memset(s_localQueue, 0, sizeof(s_localQueue));
 	memset(s_checksumSent, 0, sizeof(s_checksumSent));
@@ -66,6 +68,36 @@ void NetLockstep_Init(void)
 	memset(s_checksumRecvFlag, 0, sizeof(s_checksumRecvFlag));
 	s_localCount  = 0;
 	s_initialised = true;
+
+	/* Bootstrap the ring buffer for the first LOCKSTEP_DELAY ticks.
+	 *
+	 * Protocol: at tick N we send commands for N+DELAY and wait for tick-N
+	 * data.  But at tick 0 nobody has ever sent tick-0 commands — the first
+	 * send goes to slot DELAY.  Without seeding the buffer both sides sit
+	 * waiting for tick-0 data that never arrives and time out.
+	 *
+	 * Fix: pre-mark the first LOCKSTEP_DELAY slots as "received" with
+	 * zero commands for every possible player.  Unconnected players are
+	 * skipped by the wait loop's connected check, so marking them here is
+	 * harmless.  Slot N % LOCKSTEP_BUFFER_TICKS is cleared and re-populated
+	 * in the normal flow once the game has been running long enough. */
+	for (t = 0; t < LOCKSTEP_DELAY; t++) {
+		uint8 slot = (uint8)(t % LOCKSTEP_BUFFER_TICKS);
+		for (i = 0; i < NET_MAX_PLAYERS; i++) {
+			s_tickBuf[slot].count[i]    = 0;
+			s_tickBuf[slot].received[i] = true;
+		}
+	}
+
+	fprintf(stderr, "[NET] NetLockstep_Init: bootstrapped %u slot(s) (DELAY=%u BUFFER=%u)\n",
+	        LOCKSTEP_DELAY, LOCKSTEP_DELAY, LOCKSTEP_BUFFER_TICKS);
+
+	for (i = 0; i < NET_MAX_PLAYERS; i++) {
+		if (!g_netConfig.peers[i].connected) continue;
+		fprintf(stderr, "[NET]   peer[%u] = %s:%u%s\n",
+		        (unsigned)i, g_netConfig.peers[i].ip, g_netConfig.peers[i].port,
+		        (i == g_netConfig.localPlayerIndex) ? " (self)" : "");
+	}
 }
 
 void NetLockstep_Uninit(void)
@@ -144,9 +176,13 @@ void NetLockstep_FlushSend(uint32 gameTick)
 
 	/* Send to all other players */
 	for (i = 0; i < g_netConfig.playerCount; i++) {
+		bool sent;
 		if (i == g_netConfig.localPlayerIndex) continue;
 		if (!g_netConfig.peers[i].connected) continue;
-		Net_Send(i, pkt, len);
+		sent = Net_Send(i, pkt, len);
+		fprintf(stderr, "[NET] tick=%u FlushSend -> peer[%u] scheduledTick=%u cmds=%u bytes=%u ok=%d\n",
+		        (unsigned)gameTick, (unsigned)i, (unsigned)scheduledTick,
+		        (unsigned)s_localCount, (unsigned)len, (int)sent);
 	}
 
 	/* Clear local queue */
@@ -183,6 +219,9 @@ void NetLockstep_PumpReceive(void)
 			}
 			s_tickBuf[slot].count[pi]    = count;
 			s_tickBuf[slot].received[pi] = true;
+
+			fprintf(stderr, "[NET] PumpReceive: COMMANDS tick=%u from peer[%u] cmds=%u\n",
+			        (unsigned)tick, (unsigned)pi, (unsigned)count);
 
 		} else if (buf[0] == MSG_TICK_CHECKSUM) {
 			uint8  pi    = buf[1];
@@ -276,12 +315,21 @@ bool NetLockstep_Tick(uint32 gameTick)
 
 	if (!s_initialised || !g_netConfig.active) return true;
 
+	slot = (uint8)(gameTick % LOCKSTEP_BUFFER_TICKS);
+
+	fprintf(stderr, "[NET] Tick %u start: slot=%u  buf_state=[",
+	        (unsigned)gameTick, (unsigned)slot);
+	for (i = 0; i < g_netConfig.playerCount; i++) {
+		if (!g_netConfig.peers[i].connected) { fprintf(stderr, "-"); continue; }
+		fprintf(stderr, "%c", s_tickBuf[slot].received[i] ? 'R' : '?');
+	}
+	fprintf(stderr, "]\n");
+
 	/* 1. Send our commands for gameTick+LOCKSTEP_DELAY */
 	NetLockstep_FlushSend(gameTick);
 
 	/* 2. Compute and send checksum for previous tick */
 	checksum = NetLockstep_ComputeChecksum();
-	slot     = (uint8)(gameTick % LOCKSTEP_BUFFER_TICKS);
 	s_checksumSent[slot] = checksum;
 
 	plen = BuildChecksumPacket(pkt, gameTick, checksum);
@@ -309,11 +357,22 @@ bool NetLockstep_Tick(uint32 gameTick)
 		if (allReady) break;
 
 		if (Net_GetTime() > deadline) {
-			fprintf(stderr, "[NET] Timeout waiting for tick %u commands\n",
-			        (unsigned)gameTick);
-			return false; /* Game will stall; caller may disconnect peer */
+			fprintf(stderr, "[NET] Timeout waiting for tick %u commands (slot=%u). Missing peers: [",
+			        (unsigned)gameTick, (unsigned)slot);
+			for (i = 0; i < g_netConfig.playerCount; i++) {
+				if (!g_netConfig.peers[i].connected) continue;
+				if (!s_tickBuf[slot].received[i]) {
+					fprintf(stderr, " peer[%u]=%s:%u", (unsigned)i,
+					        g_netConfig.peers[i].ip, g_netConfig.peers[i].port);
+				}
+			}
+			fprintf(stderr, " ]\n");
+			return false;
 		}
 	}
+
+	fprintf(stderr, "[NET] Tick %u ready, applying %u player slots\n",
+	        (unsigned)gameTick, (unsigned)g_netConfig.playerCount);
 
 	/* 4. Apply all commands for this tick */
 	for (i = 0; i < g_netConfig.playerCount; i++) {
