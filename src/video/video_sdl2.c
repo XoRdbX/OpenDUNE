@@ -694,7 +694,11 @@ void Video_Tick(void)
 			} break;
 
 			case SDL_WINDOWEVENT:
-				if (event.window.event == SDL_WINDOWEVENT_EXPOSED) {
+				if (event.window.event == SDL_WINDOWEVENT_FOCUS_GAINED) {
+					/* Flush stale key state accumulated while the window was unfocused. */
+					SDL_FlushEvents(SDL_KEYDOWN, SDL_KEYUP);
+					Input_History_Clear();
+				} else if (event.window.event == SDL_WINDOWEVENT_EXPOSED) {
 					/* Clear area outside the 4:3 logical screen, if any */
 					SDL_RenderClear(s_renderer);
 

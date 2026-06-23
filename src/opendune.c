@@ -1009,6 +1009,10 @@ static void GameLoop_Main(void)
 				/* Lobby succeeded: start multiplayer game */
 				uint8 localHouseID = g_netConfig.humanHouseIDs[g_netConfig.localPlayerIndex];
 				g_playerHouseID   = (HouseType)localHouseID;
+				fprintf(stderr, "[GAME] Lobby done: localIdx=%u house=%u seed=%u\n",
+				        (unsigned)g_netConfig.localPlayerIndex,
+				        (unsigned)localHouseID,
+				        (unsigned)g_netConfig.sharedSeed);
 				GUI_Mouse_Hide_Safe();
 				GFX_ClearBlock(SCREEN_0);
 				Sprites_LoadTiles();
@@ -1079,8 +1083,17 @@ static void GameLoop_Main(void)
 		if (g_gameMode == GM_RESTART) {
 			GUI_ChangeSelectionType(SELECTIONTYPE_MENTAT);
 
-			Game_LoadScenario(g_playerHouseID, g_scenarioID);
-			if (!g_debugScenario && !g_debugSkipDialogs) {
+			/* In multiplayer all peers must load the same scenario file for
+			 * lockstep determinism, so always use the Harkonnen file. */
+			{
+				uint8 loadHouse = g_netConfig.active ? HOUSE_HARKONNEN : g_playerHouseID;
+				fprintf(stderr, "[GAME] GM_RESTART: loading scenario %u for house %u (net=%d)\n",
+				        (unsigned)g_scenarioID, (unsigned)loadHouse, (int)g_netConfig.active);
+				Game_LoadScenario(loadHouse, g_scenarioID);
+				fprintf(stderr, "[GAME] GM_RESTART: scenario loaded, g_playerHouseID=%u\n",
+				        (unsigned)g_playerHouseID);
+			}
+			if (!g_debugScenario && !g_debugSkipDialogs && !g_netConfig.active) {
 				GUI_Mentat_ShowBriefing();
 			} else {
 				Debug("Skipping GUI_Mentat_ShowBriefing()\n");
@@ -1303,15 +1316,18 @@ int main(int argc, char **argv)
 		int __cdecl __MINGW_NOTHROW _fileno (FILE*);
 	#endif
 	#endif
-	FILE *err = fopen("error.log", "w");
-	FILE *out = fopen("output.log", "w");
-
 	#if defined(_MSC_VER)
 		_CrtSetDbgFlag( _CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF );
 	#endif
 
-	if (err != NULL) _dup2(_fileno(err), _fileno(stderr));
-	if (out != NULL) _dup2(_fileno(out), _fileno(stdout));
+	{
+		char errlog[32], outlog[32];
+		snprintf(errlog, sizeof(errlog), "error_%lu.log",  (unsigned long)GetCurrentProcessId());
+		snprintf(outlog, sizeof(outlog), "output_%lu.log", (unsigned long)GetCurrentProcessId());
+		freopen(errlog, "w", stderr);
+		freopen(outlog, "w", stdout);
+		setvbuf(stderr, NULL, _IONBF, 0);
+	}
 	FreeConsole();
 #endif /* _WIN32 */
 #ifdef TOS

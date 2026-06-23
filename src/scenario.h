@@ -39,5 +39,6 @@ typedef struct Scenario {
 extern Scenario g_scenario;
 
 extern bool Scenario_Load(uint16 scenarioID, uint8 houseID);
+extern void Multiplayer_SpawnBases(void);
 
 #endif /* SCENARIO_H */

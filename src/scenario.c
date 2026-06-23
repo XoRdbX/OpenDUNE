@@ -60,6 +60,20 @@ static void Scenario_Load_House(uint8 houseID)
 	Ini_GetString(houseName, "Brain", "NONE", buf, 127, s_scenarioBuffer);
 	for (b = buf; *b != '\0'; b++) if (*b >= 'a' && *b <= 'z') *b += 'A' - 'a';
 	houseType = strstr("HUMAN$CPU", buf);
+
+	/* In multiplayer: if this house is assigned to a human player but is not
+	 * listed in the scenario INI (Brain="NONE"), allocate it anyway so that
+	 * Multiplayer_SpawnBases can place a starting base for it. */
+	if (houseType == NULL && g_netConfig.active) {
+		uint8 j;
+		for (j = 0; j < NET_MAX_PLAYERS; j++) {
+			if (g_netConfig.humanHouseIDs[j] == houseID) {
+				houseType = strstr("HUMAN$CPU", "HUMAN");
+				break;
+			}
+		}
+	}
+
 	if (houseType == NULL) return;
 
 	/* Create the house */
@@ -68,6 +82,19 @@ static void Scenario_Load_House(uint8 houseID)
 	h->credits      = Ini_GetInteger(houseName, "Credits",  0, s_scenarioBuffer);
 	h->creditsQuota = Ini_GetInteger(houseName, "Quota",    0, s_scenarioBuffer);
 	h->unitCountMax = Ini_GetInteger(houseName, "MaxUnit", 39, s_scenarioBuffer);
+
+	/* In multiplayer the scenario file may say Brain=CPU for a house that a
+	 * human player is assigned to (because we always load from SCENH*.INI).
+	 * Override: treat such houses as human regardless of the scenario Brain. */
+	if (g_netConfig.active && *houseType != 'H') {
+		uint8 i;
+		for (i = 0; i < NET_MAX_PLAYERS; i++) {
+			if (g_netConfig.humanHouseIDs[i] == houseID) {
+				houseType = strstr("HUMAN$CPU", "HUMAN");
+				break;
+			}
+		}
+	}
 
 	/* For 'Brain = Human' we have to set a few additional things */
 	if (*houseType != 'H') return;
@@ -591,6 +618,176 @@ bool Scenario_Load(uint16 scenarioID, uint8 houseID)
 
 	g_tickScenarioStart = g_timerGame;
 
+	if (g_netConfig.active) Multiplayer_SpawnBases();
+
 	free(s_scenarioBuffer); s_scenarioBuffer = NULL;
 	return true;
+}
+
+/* --------------------------------------------------------------------------
+ * Multiplayer base spawning
+ * --------------------------------------------------------------------------
+ * After the scenario is loaded, every human player must have a Construction
+ * Yard.  The scenario file only contains structures for the "primary" house
+ * (always Harkonnen for SCENH*.INI).  For any other human house we scan the
+ * map for a cluster of bare-rock tiles far from the existing base and place
+ * a Construction Yard + Wind Trap there.
+ *
+ * The viewport camera is also repositioned to each player's own base so the
+ * player starts looking at something useful.
+ * -------------------------------------------------------------------------- */
+
+/* Return true if a 2×2 area starting at (px,py) consists entirely of valid-
+ * for-structure rock tiles with no structure already on them. */
+static bool FindRockCluster(uint16 px, uint16 py)
+{
+	uint8 dx, dy;
+	for (dy = 0; dy < 2; dy++) {
+		for (dx = 0; dx < 2; dx++) {
+			uint16 packed = Tile_PackXY(px + dx, py + dy);
+			uint16 lst;
+			if ((px + dx) >= 63 || (py + dy) >= 63) return false;
+			if (g_map[packed].hasStructure)            return false;
+			lst = Map_GetLandscapeType(packed);
+			if (lst != LST_ENTIRELY_ROCK && lst != LST_MOSTLY_ROCK) return false;
+		}
+	}
+	return true;
+}
+
+/* Find the packed position of the first Construction Yard belonging to houseID,
+ * or 0xFFFF if none exists. */
+static uint16 FindConstrYardPos(uint8 houseID)
+{
+	PoolFindStruct find;
+	Structure *s;
+	memset(&find, 0, sizeof(find));
+	find.houseID = houseID;
+	find.type    = 0xFFFF;
+	find.index   = 0xFFFF;
+	s = Structure_Find(&find);
+	while (s != NULL) {
+		if (s->o.type == STRUCTURE_CONSTRUCTION_YARD)
+			return Tile_PackTile(s->o.position);
+		s = Structure_Find(&find);
+	}
+	return 0xFFFF;
+}
+
+void Multiplayer_SpawnBases(void)
+{
+	uint8  i;
+	uint16 existingBasePos = 0xFFFF; /* packed position of the Harkonnen base */
+
+	fprintf(stderr, "[NET] Multiplayer_SpawnBases: playerCount=%u localIdx=%u\n",
+	        (unsigned)g_netConfig.playerCount, (unsigned)g_netConfig.localPlayerIndex);
+	for (i = 0; i < g_netConfig.playerCount; i++) {
+		fprintf(stderr, "[NET]   player[%u] houseID=%u\n",
+		        (unsigned)i, (unsigned)g_netConfig.humanHouseIDs[i]);
+	}
+
+	/* Find where the scenario's pre-existing base is (any house). */
+	for (i = 0; i < HOUSE_MAX; i++) {
+		uint16 p = FindConstrYardPos(i);
+		if (p != 0xFFFF) { existingBasePos = p; break; }
+	}
+
+	for (i = 0; i < g_netConfig.playerCount; i++) {
+		uint8   houseID;
+		House  *h;
+		uint16  basePos;
+		uint16  px, py, cx, cy;
+		uint16  bestPos = 0xFFFF;
+		uint32  bestDist = 0;
+		bool    isLocalPlayer;
+
+		if (i >= NET_MAX_PLAYERS) break;
+		houseID = g_netConfig.humanHouseIDs[i];
+		if (houseID >= HOUSE_MAX) continue;
+
+		/* If this house already has a construction yard, just fix the camera. */
+		basePos = FindConstrYardPos(houseID);
+		if (basePos == 0xFFFF) {
+			/* Need to place a new base.  Find a 2×2 rock cluster as far from
+			 * the existing base as possible, staying inside map bounds. */
+			for (py = 2; py < 60; py++) {
+				for (px = 2; px < 60; px++) {
+					uint32 dist = 0;
+					if (!FindRockCluster(px, py)) continue;
+					if (existingBasePos != 0xFFFF) {
+						int16 dx = (int16)px - (int16)Tile_GetPackedX(existingBasePos);
+						int16 dy = (int16)py - (int16)Tile_GetPackedY(existingBasePos);
+						dist = (uint32)(dx*dx + dy*dy);
+					}
+					if (dist > bestDist) {
+						bestDist = dist;
+						bestPos  = Tile_PackXY(px, py);
+					}
+				}
+			}
+
+			if (bestPos == 0xFFFF) {
+				fprintf(stderr, "[NET] Multiplayer_SpawnBases: no rock spot for house %u\n", (unsigned)houseID);
+				continue;
+			}
+
+			{
+				Structure *s;
+				/* Ensure the house is allocated before creating structures for it */
+				h = House_Get_ByIndex(houseID);
+				if (h == NULL) {
+					fprintf(stderr, "[NET] Multiplayer_SpawnBases: house %u not allocated, skipping\n", (unsigned)houseID);
+					continue;
+				}
+				/* Place Construction Yard */
+				s = Structure_Create(STRUCTURE_INDEX_INVALID, STRUCTURE_CONSTRUCTION_YARD, houseID, bestPos);
+				if (s == NULL) {
+					fprintf(stderr, "[NET] Multiplayer_SpawnBases: CY creation failed for house %u at %u\n",
+					        (unsigned)houseID, (unsigned)bestPos);
+					continue;
+				}
+				basePos = bestPos;
+
+				/* Place a Wind Trap next to it for initial power */
+				{
+					uint16 wtx = Tile_GetPackedX(bestPos) + 2;
+					uint16 wty = Tile_GetPackedY(bestPos);
+					if (FindRockCluster(wtx, wty))
+						Structure_Create(STRUCTURE_INDEX_INVALID, STRUCTURE_WINDTRAP, houseID, Tile_PackXY(wtx, wty));
+				}
+
+				fprintf(stderr, "[NET] Multiplayer_SpawnBases: spawned base for house %u at packed=%u\n",
+				        (unsigned)houseID, (unsigned)basePos);
+			}
+
+			/* Give the house some starting credits if it has none */
+			h = House_Get_ByIndex(houseID);
+			if (h != NULL && h->credits < 1000) h->credits = 1000;
+		}
+
+		/* Ensure the local player's house pointer is set (may not be set if
+		 * the house wasn't in the scenario INI's Brain=Human list). */
+		isLocalPlayer = (i == g_netConfig.localPlayerIndex);
+		if (isLocalPlayer) {
+			h = House_Get_ByIndex(houseID);
+			if (h != NULL) {
+				g_playerHouseID       = houseID;
+				g_playerHouse         = h;
+				g_playerCreditsNoSilo = h->credits;
+				h->flags.human        = true;
+				h->flags.isAIActive   = false;
+			}
+		}
+
+		/* Move the local player's viewport to their own base. */
+		if (isLocalPlayer && basePos != 0xFFFF) {
+			cx = Tile_GetPackedX(basePos);
+			cy = Tile_GetPackedY(basePos);
+			/* Centre the minimap/viewport on the base, clamped to valid range */
+			if (cx > 2) cx -= 2;
+			if (cy > 2) cy -= 2;
+			g_minimapPosition   = Tile_PackXY(cx, cy);
+			g_viewportPosition  = g_minimapPosition;
+		}
+	}
 }
