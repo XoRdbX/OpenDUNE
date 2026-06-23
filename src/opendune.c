@@ -1312,8 +1312,13 @@ int main(int argc, char **argv)
 		_CrtSetDbgFlag( _CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF );
 	#endif
 
-	freopen("error.log",  "w", stderr);
-	freopen("output.log", "w", stdout);
+	{
+		char errlog[32], outlog[32];
+		snprintf(errlog, sizeof(errlog), "error_%lu.log",  (unsigned long)GetCurrentProcessId());
+		snprintf(outlog, sizeof(outlog), "output_%lu.log", (unsigned long)GetCurrentProcessId());
+		freopen(errlog, "w", stderr);
+		freopen(outlog, "w", stdout);
+	}
 	FreeConsole();
 #endif /* _WIN32 */
 #ifdef TOS
