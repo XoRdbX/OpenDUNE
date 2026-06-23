@@ -308,6 +308,9 @@ bool GUI_Lobby_Show(void)
 	uint16 key;
 	char   statusLine[80];
 
+	bool   needsRedraw = true;
+	uint32 lastDraw    = 0;
+
 	memset(&g_netConfig, 0, sizeof(g_netConfig));
 	memset(s_slots, 0, sizeof(s_slots));
 	statusLine[0] = '\0';
@@ -402,7 +405,11 @@ bool GUI_Lobby_Show(void)
 	while (running) {
 		uint32 now = Net_GetTime();
 
-		LobbyDraw(isHost, mySlot, statusLine);
+		if (needsRedraw || (now - lastDraw) >= 100) {
+			LobbyDraw(isHost, mySlot, statusLine);
+			needsRedraw = false;
+			lastDraw    = now;
+		}
 
 		/* Handle input */
 		{
@@ -424,6 +431,7 @@ bool GUI_Lobby_Show(void)
 				} else {
 					snprintf(statusLine, sizeof(statusLine),
 					         "Not all players connected yet!");
+					needsRedraw = true;
 				}
 			}
 
@@ -459,6 +467,7 @@ bool GUI_Lobby_Show(void)
 
 				if (slot >= 0) {
 					LobbyHandlePacket((uint8)slot, buf, rlen, true);
+					needsRedraw = true;
 					if (buf[0] == LOBBY_MSG_START) {
 						started = true;
 						running = false;
@@ -491,6 +500,7 @@ bool GUI_Lobby_Show(void)
 					}
 				}
 				LobbyHandlePacket(sender, buf, rlen, false);
+				needsRedraw = true;
 				if (buf[0] == LOBBY_MSG_START) {
 					started = true;
 					running = false;

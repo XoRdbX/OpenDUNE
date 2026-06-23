@@ -672,11 +672,11 @@ static void ReadProfileIni(const char *filename)
  */
 static void GameLoop_GameIntroAnimationMenu(void)
 {
-	static const uint16 mainMenuStrings[][6] = {
-		{STR_PLAY_A_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_NULL,         STR_NULL,         STR_NULL}, /* Neither HOF nor save. */
-		{STR_PLAY_A_GAME, STR_REPLAY_INTRODUCTION, STR_LOAD_GAME, STR_EXIT_GAME,    STR_NULL,         STR_NULL}, /* Has a save game. */
-		{STR_PLAY_A_GAME, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_HALL_OF_FAME, STR_NULL,         STR_NULL}, /* Has a HOF. */
-		{STR_PLAY_A_GAME, STR_REPLAY_INTRODUCTION, STR_LOAD_GAME, STR_EXIT_GAME,    STR_HALL_OF_FAME, STR_NULL}  /* Has a HOF and a save game. */
+	static const uint16 mainMenuStrings[][7] = {
+		{STR_PLAY_A_GAME, STR_MULTIPLAYER, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_NULL,         STR_NULL,         STR_NULL}, /* Neither HOF nor save. */
+		{STR_PLAY_A_GAME, STR_MULTIPLAYER, STR_REPLAY_INTRODUCTION, STR_LOAD_GAME, STR_EXIT_GAME,    STR_NULL,         STR_NULL}, /* Has a save game. */
+		{STR_PLAY_A_GAME, STR_MULTIPLAYER, STR_REPLAY_INTRODUCTION, STR_EXIT_GAME, STR_HALL_OF_FAME, STR_NULL,         STR_NULL}, /* Has a HOF. */
+		{STR_PLAY_A_GAME, STR_MULTIPLAYER, STR_REPLAY_INTRODUCTION, STR_LOAD_GAME, STR_EXIT_GAME,    STR_HALL_OF_FAME, STR_NULL}  /* Has a HOF and a save game. */
 	};
 
 	bool loadGame = false;
@@ -685,7 +685,7 @@ static void GameLoop_GameIntroAnimationMenu(void)
 	uint16 maxWidth;
 	static bool hasSave = false;
 	static bool hasFame = false;
-	static const char *strings[6];
+	static const char *strings[7];
 	static uint16 index = 0xFFFF;
 
 	if (index == 0xFFFF) {
@@ -774,15 +774,19 @@ static void GameLoop_GameIntroAnimationMenu(void)
 
 		g_widgetProperties[21].height = 0;
 
-		for (i = 0; i < 6; i++) {
+		for (i = 0; i < 7; i++) {
 			strings[i] = NULL;
 
-			if (mainMenuStrings[index][i] == 0) {
+			if (mainMenuStrings[index][i] == STR_NULL) {
 				if (g_widgetProperties[21].height == 0) g_widgetProperties[21].height = i;
 				continue;
 			}
 
-			strings[i] = String_Get_ByIndex(mainMenuStrings[index][i]);
+			if (mainMenuStrings[index][i] == STR_MULTIPLAYER) {
+				strings[i] = "Multi Player";
+			} else {
+				strings[i] = String_Get_ByIndex(mainMenuStrings[index][i]);
+			}
 		}
 
 		GUI_DrawText_Wrapper(NULL, 0, 0, 0, 0, 0x22);
@@ -790,6 +794,7 @@ static void GameLoop_GameIntroAnimationMenu(void)
 		maxWidth = 0;
 
 		for (i = 0; i < g_widgetProperties[21].height; i++) {
+			if (strings[i] == NULL) continue;
 			if (Font_GetStringWidth(strings[i]) <= maxWidth) continue;
 			maxWidth = Font_GetStringWidth(strings[i]);
 		}
@@ -835,13 +840,8 @@ static void GameLoop_GameIntroAnimationMenu(void)
 
 	GUI_PaletteAnimate();
 
-	if (stringID == STR_PLAY_A_GAME) g_gameMode = GM_PICKHOUSE;
-
-	/* M key in main menu launches multiplayer lobby */
-	{
-		uint16 k = Input_Keyboard_NextKey();
-		if (k == 'M' || k == 'm') g_gameMode = GM_LOBBY;
-	}
+	if (stringID == STR_PLAY_A_GAME)  g_gameMode = GM_PICKHOUSE;
+	if (stringID == STR_MULTIPLAYER)  g_gameMode = GM_LOBBY;
 }
 
 static void InGame_Numpad_Move(uint16 key)
