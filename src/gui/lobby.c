@@ -382,8 +382,12 @@ bool GUI_Lobby_Show(void)
 		snprintf(s_slots[mySlot].ip, sizeof(s_slots[mySlot].ip), "me");
 	}
 
-	/* ---- Open socket ---- */
-	if (!Net_Init(LOBBY_PORT)) {
+	/* ---- Open socket ----
+	 * Host binds to the well-known port so clients can reach it.
+	 * Client binds to port 0 (OS picks a free ephemeral port) so that
+	 * multiple players on the same machine don't fight over the same port.
+	 * The host learns the client's actual port from the UDP source address. */
+	if (!Net_Init(isHost ? LOBBY_PORT : 0)) {
 		GUI_DrawText_Wrapper("ERROR: Cannot open UDP socket!", 10, 150, 4, 0, 0x12);
 		GFX_SetPalette(g_palette1);
 		sleepIdle();
@@ -475,7 +479,7 @@ bool GUI_Lobby_Show(void)
 			uint8  sender;
 			int16  rlen;
 
-			while ((rlen = Net_Recv(&sender, buf, sizeof(rlen))) > 0) {
+			while ((rlen = Net_Recv(&sender, buf, sizeof(buf))) > 0) {
 				if (buf[0] == LOBBY_MSG_SLOT) {
 					uint8 assigned = buf[1];
 					if (assigned > 0 && assigned < NET_MAX_PLAYERS) {
