@@ -60,6 +60,20 @@ static void Scenario_Load_House(uint8 houseID)
 	Ini_GetString(houseName, "Brain", "NONE", buf, 127, s_scenarioBuffer);
 	for (b = buf; *b != '\0'; b++) if (*b >= 'a' && *b <= 'z') *b += 'A' - 'a';
 	houseType = strstr("HUMAN$CPU", buf);
+
+	/* In multiplayer: if this house is assigned to a human player but is not
+	 * listed in the scenario INI (Brain="NONE"), allocate it anyway so that
+	 * Multiplayer_SpawnBases can place a starting base for it. */
+	if (houseType == NULL && g_netConfig.active) {
+		uint8 j;
+		for (j = 0; j < NET_MAX_PLAYERS; j++) {
+			if (g_netConfig.humanHouseIDs[j] == houseID) {
+				houseType = strstr("HUMAN$CPU", "HUMAN");
+				break;
+			}
+		}
+	}
+
 	if (houseType == NULL) return;
 
 	/* Create the house */
@@ -712,6 +726,12 @@ void Multiplayer_SpawnBases(void)
 
 			{
 				Structure *s;
+				/* Ensure the house is allocated before creating structures for it */
+				h = House_Get_ByIndex(houseID);
+				if (h == NULL) {
+					fprintf(stderr, "[NET] Multiplayer_SpawnBases: house %u not allocated, skipping\n", (unsigned)houseID);
+					continue;
+				}
 				/* Place Construction Yard */
 				s = Structure_Create(STRUCTURE_INDEX_INVALID, STRUCTURE_CONSTRUCTION_YARD, houseID, bestPos);
 				if (s == NULL) {
