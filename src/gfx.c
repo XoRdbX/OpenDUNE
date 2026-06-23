@@ -477,7 +477,6 @@ void GFX_SetPalette(uint8 *palette)
 		   palette[from*3+2] != g_paletteActive[from*3+2]) break;
 	}
 	if (from >= 256) {
-		Warning("Useless GFX_SetPalette() call\n");
 		return;
 	}
 	for (to = 255; to > from; to--) {
