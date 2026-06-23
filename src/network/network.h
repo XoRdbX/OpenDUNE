@@ -34,6 +34,8 @@ extern bool   Net_Init(uint16 port);
 extern void   Net_Uninit(void);
 extern bool   Net_Send(uint8 peerIndex, const uint8 *data, uint16 len);
 extern int16  Net_Recv(uint8 *peerIndexOut, uint8 *buf, uint16 bufLen);
+extern int16  Net_RecvAny(uint8 *buf, uint16 bufLen, char *srcIP, uint16 *srcPort);
+extern bool   Net_SetPeerAddr(uint8 peerIndex, const char *ip, uint16 port);
 extern uint32 Net_GetTime(void);
 
 #endif /* NETWORK_H */

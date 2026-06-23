@@ -140,6 +140,57 @@ int16 Net_Recv(uint8 *peerIndexOut, uint8 *buf, uint16 bufLen)
 	return -1; /* Unknown sender */
 }
 
+/* Register or update a peer's address at runtime (used for dynamic host discovery). */
+bool Net_SetPeerAddr(uint8 peerIndex, const char *ip, uint16 port)
+{
+	if (peerIndex >= NET_MAX_PLAYERS) return false;
+	snprintf(g_netConfig.peers[peerIndex].ip,
+	         sizeof(g_netConfig.peers[peerIndex].ip), "%s", ip);
+	g_netConfig.peers[peerIndex].port      = port;
+	g_netConfig.peers[peerIndex].connected = true;
+
+	memset(&s_peerAddr[peerIndex], 0, sizeof(s_peerAddr[peerIndex]));
+	s_peerAddr[peerIndex].sin_family = AF_INET;
+	s_peerAddr[peerIndex].sin_port   = htons(port);
+#if defined(_WIN32) && defined(_MSC_VER) && (_MSC_VER < 1900)
+	s_peerAddr[peerIndex].sin_addr.s_addr = inet_addr(ip);
+#else
+	inet_pton(AF_INET, ip, &s_peerAddr[peerIndex].sin_addr);
+#endif
+	return true;
+}
+
+/* Receive from any source (including unregistered peers).
+ * srcIP (at least 64 bytes) and srcPort are filled with the sender's address.
+ * Returns bytes received, or -1 if nothing available. */
+int16 Net_RecvAny(uint8 *buf, uint16 bufLen, char *srcIP, uint16 *srcPort)
+{
+	struct sockaddr_in from;
+	socklen_t fromLen = sizeof(from);
+	int r;
+
+	if (s_sock == INVALID_SOCKET) return -1;
+
+	r = (int)recvfrom(s_sock, (char *)buf, bufLen, 0,
+	                  (struct sockaddr *)&from, &fromLen);
+	if (r <= 0) return -1;
+
+	if (srcIP != NULL) {
+#if defined(_WIN32) && defined(_MSC_VER) && (_MSC_VER < 1900)
+		{
+			char *s = inet_ntoa(from.sin_addr);
+			strncpy(srcIP, s ? s : "0.0.0.0", 63);
+			srcIP[63] = '\0';
+		}
+#else
+		inet_ntop(AF_INET, &from.sin_addr, srcIP, 64);
+#endif
+	}
+	if (srcPort != NULL) *srcPort = ntohs(from.sin_port);
+
+	return (int16)r;
+}
+
 uint32 Net_GetTime(void)
 {
 #if defined(_WIN32)
